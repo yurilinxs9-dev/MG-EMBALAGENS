@@ -1,0 +1,234 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import type { PropostaDB, StatusProposta } from "@/types/proposta";
+import { useAuth } from "./useAuth";
+
+export function usePropostas() {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["propostas", user?.id],
+    queryFn: async (): Promise<PropostaDB[]> => {
+      if (!user) return [];
+      const { data, error } = await supabase
+        .from("propostas")
+        .select("*, proposta_servicos(*)")
+        .eq("criado_por", user.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data as any) ?? [];
+    },
+    enabled: !!user,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+  });
+}
+
+export function useProposta(id: string | undefined) {
+  return useQuery({
+    queryKey: ["proposta", id],
+    queryFn: async (): Promise<PropostaDB> => {
+      const { data, error } = await supabase
+        .from("propostas")
+        .select("*, proposta_servicos(*)")
+        .eq("id", id!)
+        .single();
+      if (error) throw error;
+      return data as any;
+    },
+    enabled: !!id,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+// ── Busca proposta por token público — sem auth ───────────────────────────────
+export function useGetPropostaByToken(token: string | undefined) {
+  return useQuery({
+    queryKey: ["proposta_publica", token],
+    queryFn: async (): Promise<PropostaDB | null> => {
+      if (!token) return null;
+      const { data, error } = await supabase
+        .from("propostas")
+        .select("*, proposta_servicos(*)")
+        .eq("public_token", token)
+        .maybeSingle();
+      if (error) throw error;
+      return (data as any) || null;
+    },
+    enabled: !!token,
+    staleTime: 30 * 1000,
+  });
+}
+
+// ── Aceitar proposta via token — sem auth ─────────────────────────────────────
+export function useAceitarProposta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (token: string) => {
+      const { error } = await supabase
+        .from("propostas")
+        .update({ status: "fechado" })
+        .eq("public_token", token);
+      if (error) throw error;
+    },
+    onSuccess: (_data, token) => {
+      qc.invalidateQueries({ queryKey: ["proposta_publica", token] });
+    },
+  });
+}
+
+export function useCreateProposta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (proposta: {
+      cliente_nome: string;
+      cliente_empresa?: string;
+      cliente_whatsapp?: string;
+      cliente_email?: string;
+      cliente_endereco?: string;
+      cliente_cpf_cnpj?: string;
+      valor_mensal: number;
+      valor_setup: number;
+      valor_total: number;
+      desconto_tipo?: string;
+      desconto_valor?: number;
+      observacoes?: string;
+      criado_por?: string;
+      servicos: { servico_nome: string; descricao: string; valor_mensal: number; valor_setup: number; quantidade?: number }[];
+    }) => {
+      const { servicos, ...propostaData } = proposta;
+      const { data, error } = await supabase
+        .from("propostas")
+        .insert(propostaData as any)
+        .select()
+        .single();
+      if (error) throw error;
+
+      if (servicos.length > 0) {
+        const { error: sError } = await supabase
+          .from("proposta_servicos")
+          .insert(servicos.map((s) => ({ ...s, proposta_id: data.id })) as any);
+        if (sError) throw sError;
+      }
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["propostas"] }),
+  });
+}
+
+export function useUpdatePropostaStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: StatusProposta }) => {
+      const { error } = await supabase.from("propostas").update({ status }).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["propostas"] }),
+  });
+}
+
+export function useUpdateProposta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...data }: { id: string; observacoes?: string; status?: StatusProposta }) => {
+      const { error } = await supabase.from("propostas").update(data).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["propostas"] }),
+  });
+}
+
+// Atualiza proposta completa (dados + serviços) - usado quando completamos um lead
+export function useUpdatePropostaCompleta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (proposta: {
+      id: string;
+      cliente_nome: string;
+      cliente_empresa?: string;
+      cliente_whatsapp?: string;
+      cliente_email?: string;
+      cliente_endereco?: string;
+      cliente_cpf_cnpj?: string;
+      valor_mensal: number;
+      valor_setup: number;
+      valor_total: number;
+      desconto_tipo?: string;
+      desconto_valor?: number;
+      observacoes?: string;
+      servicos: { servico_nome: string; descricao: string; valor_mensal: number; valor_setup: number; quantidade?: number }[];
+    }) => {
+      const { id, servicos, ...propostaData } = proposta;
+
+      // Atualiza proposta
+      const { error } = await supabase
+        .from("propostas")
+        .update(propostaData as any)
+        .eq("id", id);
+      if (error) throw error;
+
+      // Remove serviços antigos e insere novos
+      const { error: deleteError } = await supabase
+        .from("proposta_servicos")
+        .delete()
+        .eq("proposta_id", id);
+      if (deleteError) throw deleteError;
+
+      if (servicos.length > 0) {
+        const { error: sError } = await supabase
+          .from("proposta_servicos")
+          .insert(servicos.map((s) => ({ ...s, proposta_id: id })) as any);
+        if (sError) throw sError;
+      }
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["propostas"] }),
+  });
+}
+
+export function useDeleteProposta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("propostas").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["propostas"] }),
+  });
+}
+
+export function useDuplicateProposta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data: original, error: fetchError } = await supabase
+        .from("propostas")
+        .select("*, proposta_servicos(*)")
+        .eq("id", id)
+        .single();
+      if (fetchError) throw fetchError;
+
+      const { id: _id, created_at, updated_at, proposta_servicos, public_token: _tok, ...rest } = original as any;
+      const { data: newProposta, error } = await supabase
+        .from("propostas")
+        .insert({ ...rest, status: "novo_lead", cliente_nome: `${rest.cliente_nome} (cópia)` })
+        .select()
+        .single();
+      if (error) throw error;
+
+      if (proposta_servicos?.length > 0) {
+        const { error: sError } = await supabase
+          .from("proposta_servicos")
+          .insert(proposta_servicos.map((s: any) => ({
+            proposta_id: newProposta.id,
+            servico_nome: s.servico_nome,
+            descricao: s.descricao,
+            valor_mensal: s.valor_mensal,
+            valor_setup: s.valor_setup,
+            quantidade: s.quantidade ?? 1,
+          })) as any);
+        if (sError) throw sError;
+      }
+      return newProposta;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["propostas"] }),
+  });
+}
