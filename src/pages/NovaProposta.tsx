@@ -88,7 +88,7 @@ export default function NovaProposta() {
     endereco: string;
   }
 
-  const [pendingPapelCalc, setPendingPapelCalc] = useState<ItemCalculado | null>(null);
+  const [pendingPapelCalc, setPendingPapelCalc] = useState<ItemCalculado[] | null>(null);
   const [pendingPapelPagamento, setPendingPapelPagamento] = useState<PagamentoInfo | null>(null);
   const [popupNome, setPopupNome] = useState("");
   const [popupEmpresa, setPopupEmpresa] = useState("");
@@ -96,10 +96,12 @@ export default function NovaProposta() {
   const [popupEmail, setPopupEmail] = useState("");
   const [popupEndereco, setPopupEndereco] = useState("");
 
-  const gerarPropostaPapelComCliente = async (calc: ItemCalculado, pagamento: PagamentoInfo, cliente: ClienteDados) => {
+  const gerarPropostaPapelComCliente = async (calcs: ItemCalculado[], pagamento: PagamentoInfo, cliente: ClienteDados) => {
     setGerandoPapel(true);
     try {
-      const valorTotalProposta = Number((calc.valorUnitario * calc.quantidade).toFixed(2));
+      const valorTotalProposta = Number(
+        calcs.reduce((s, c) => s + c.valorUnitario * c.quantidade, 0).toFixed(2),
+      );
 
       const valoresProposta: any = {
         cliente_nome: cliente.nome,
@@ -113,13 +115,13 @@ export default function NovaProposta() {
         desconto_tipo: "fixo",
         desconto_valor: 0,
         observacoes: nota || undefined,
-        servicos: [{
-          servico_nome: calc.nome,
-          descricao: calc.descricao,
-          valor_mensal: calc.valorUnitario,
+        servicos: calcs.map((c) => ({
+          servico_nome: c.nome,
+          descricao: c.descricao,
+          valor_mensal: c.valorUnitario,
           valor_setup: 0,
-          quantidade: calc.quantidade,
-        }],
+          quantidade: c.quantidade,
+        })),
       };
 
       if (isEditingLead) {
@@ -136,12 +138,12 @@ export default function NovaProposta() {
           clienteWhatsapp: cliente.whatsapp,
           clienteEndereco: cliente.endereco,
           nota: nota || "",
-          itens: [{
-            nome: calc.nome,
-            descricao: calc.descricao,
-            valorUnitario: calc.valorUnitario,
-            quantidade: calc.quantidade,
-          }],
+          itens: calcs.map((c) => ({
+            nome: c.nome,
+            descricao: c.descricao,
+            valorUnitario: c.valorUnitario,
+            quantidade: c.quantidade,
+          })),
           valorTotal: valorTotalProposta,
           pagamento,
         });
@@ -159,18 +161,18 @@ export default function NovaProposta() {
     }
   };
 
-  const handleGerarPropostaPapel = async (calc: ItemCalculado, pagamento: PagamentoInfo) => {
+  const handleGerarPropostaPapel = async (calcs: ItemCalculado[], pagamento: PagamentoInfo) => {
     if (!clienteNome.trim()) {
       setPopupNome(clienteNome);
       setPopupEmpresa(clienteEmpresa);
       setPopupWhatsapp(clienteWhatsapp);
       setPopupEmail(clienteEmail);
       setPopupEndereco(clienteEndereco);
-      setPendingPapelCalc(calc);
+      setPendingPapelCalc(calcs);
       setPendingPapelPagamento(pagamento);
       return;
     }
-    await gerarPropostaPapelComCliente(calc, pagamento, {
+    await gerarPropostaPapelComCliente(calcs, pagamento, {
       nome: clienteNome,
       empresa: clienteEmpresa,
       whatsapp: clienteWhatsapp,
@@ -186,11 +188,11 @@ export default function NovaProposta() {
     setClienteWhatsapp(popupWhatsapp);
     setClienteEmail(popupEmail);
     setClienteEndereco(popupEndereco);
-    const calc = pendingPapelCalc;
+    const calcs = pendingPapelCalc;
     const pagamento = pendingPapelPagamento;
     setPendingPapelCalc(null);
     setPendingPapelPagamento(null);
-    await gerarPropostaPapelComCliente(calc, pagamento, {
+    await gerarPropostaPapelComCliente(calcs, pagamento, {
       nome: popupNome,
       empresa: popupEmpresa,
       whatsapp: popupWhatsapp,

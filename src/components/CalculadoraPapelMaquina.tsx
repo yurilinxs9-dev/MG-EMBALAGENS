@@ -33,9 +33,19 @@ export interface PagamentoInfo {
 interface Props {
   open: boolean;
   onClose: () => void;
-  onGerar: (item: ItemCalculado, pagamento: PagamentoInfo) => Promise<void> | void;
+  onGerar: (items: ItemCalculado[], pagamento: PagamentoInfo) => Promise<void> | void;
   loading?: boolean;
 }
+
+type Faixa = { id: string; quantidade: number; acrescimo500: boolean };
+
+const newFaixa = (quantidade = 1000, acrescimo500 = false): Faixa => ({
+  id: (typeof crypto !== "undefined" && "randomUUID" in crypto)
+    ? crypto.randomUUID()
+    : `f_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  quantidade,
+  acrescimo500,
+});
 
 const formatCurrency = (v: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
@@ -53,8 +63,7 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
   const [medidaIdx, setMedidaIdx] = useState<string>("");
   const [papel, setPapel] = useState<PapelTipo>("AP180");
 
-  const [quantidade, setQuantidade] = useState<number>(1000);
-  const [acrescimo500, setAcrescimo500] = useState<boolean>(false);
+  const [faixas, setFaixas] = useState<Faixa[]>([newFaixa(1000, false)]);
 
   const [papelValorOverride, setPapelValorOverride] = useState<number | null>(null);
 
@@ -93,11 +102,6 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
     return Number.isFinite(idx) ? sacolas[idx] ?? null : null;
   }, [sacolas, medidaIdx]);
 
-  // Auto-toggle acréscimo 500 sugerido pela tabela
-  useEffect(() => {
-    setAcrescimo500(quantidade > 0 && quantidade < 1000);
-  }, [quantidade]);
-
   // Reset overrides ao trocar de medida/papel
   useEffect(() => {
     setPapelValorOverride(null);
@@ -120,57 +124,54 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
     return sacola?.acabamentos[key] ?? 0;
   };
 
-  const corValorAtual = corValor ?? (quantidade >= 5000 ? EXTRAS.COR_5000_MAIS : EXTRAS.COR_ATE_5000);
   const gorguraoValorAtual = gorguraoValor ?? (gorgurao === "pb" ? EXTRAS.GORGURAO_PB : EXTRAS.GORGURAO_COLORIDO);
   const flatValorAtual = flatValor ?? (flat === "pb" ? EXTRAS.FLAT_PB : EXTRAS.FLAT_COLORIDO);
+  const corValorPara = (qty: number) => corValor ?? (qty >= 5000 ? EXTRAS.COR_5000_MAIS : EXTRAS.COR_ATE_5000);
+
+  type FaixaCalc = { faixa: Faixa; unit: number; total: number; qty: number; breakdown: string[] };
 
   const calculo = useMemo(() => {
     if (!sacola) return null;
     if (papelValor == null)
       return { erro: `${PAPEIS_LABELS[papel]} indisponível para medida ${sacola.medida}` } as const;
+    if (faixas.length === 0) return { erro: "Adicione ao menos uma faixa de quantidade" } as const;
 
-    let unit = papelValor;
-    const breakdown: string[] = [`Papel ${PAPEIS_LABELS[papel]}: R$ ${papelValor.toFixed(2)}`];
+    const porFaixa: FaixaCalc[] = faixas.map((f) => {
+      let unit = papelValor;
+      const breakdown: string[] = [`Papel ${PAPEIS_LABELS[papel]}: R$ ${papelValor.toFixed(2)}`];
 
-    for (const ac of ALL_ACABAMENTOS) {
-      if (acabamentosSel.has(ac.key)) {
-        const v = acabamentoValor(ac.key);
-        unit += v;
-        breakdown.push(`${ac.label}: +R$ ${v.toFixed(2)}`);
+      for (const ac of ALL_ACABAMENTOS) {
+        if (acabamentosSel.has(ac.key)) {
+          const v = acabamentoValor(ac.key);
+          unit += v;
+          breakdown.push(`${ac.label}: +R$ ${v.toFixed(2)}`);
+        }
       }
-    }
 
-    if (corQty > 0) {
-      const add = corQty * corValorAtual;
-      unit += add;
-      breakdown.push(`${corQty} cor(es) × R$ ${corValorAtual.toFixed(2)}: +R$ ${add.toFixed(2)}`);
-    }
-    if (ilhos) {
-      unit += ilhosValor;
-      breakdown.push(`Ilhós: +R$ ${ilhosValor.toFixed(2)}`);
-    }
-    if (gorgurao) {
-      unit += gorguraoValorAtual;
-      breakdown.push(`Gorgurão ${gorgurao === "pb" ? "P/B" : "Colorido"}: +R$ ${gorguraoValorAtual.toFixed(2)}`);
-    }
-    if (flat) {
-      unit += flatValorAtual;
-      breakdown.push(`Flat ${flat === "pb" ? "P/B" : "Colorido"}: +R$ ${flatValorAtual.toFixed(2)}`);
-    }
-    if (policromia) {
-      unit += policromiaValor;
-      breakdown.push(`Policromia: +R$ ${policromiaValor.toFixed(2)}`);
-    }
+      if (corQty > 0) {
+        const cv = corValorPara(f.quantidade);
+        const add = corQty * cv;
+        unit += add;
+        breakdown.push(`${corQty} cor(es) × R$ ${cv.toFixed(2)}: +R$ ${add.toFixed(2)}`);
+      }
+      if (ilhos) { unit += ilhosValor; breakdown.push(`Ilhós: +R$ ${ilhosValor.toFixed(2)}`); }
+      if (gorgurao) { unit += gorguraoValorAtual; breakdown.push(`Gorgurão ${gorgurao === "pb" ? "P/B" : "Colorido"}: +R$ ${gorguraoValorAtual.toFixed(2)}`); }
+      if (flat) { unit += flatValorAtual; breakdown.push(`Flat ${flat === "pb" ? "P/B" : "Colorido"}: +R$ ${flatValorAtual.toFixed(2)}`); }
+      if (policromia) { unit += policromiaValor; breakdown.push(`Policromia: +R$ ${policromiaValor.toFixed(2)}`); }
 
-    if (acrescimo500) {
-      const acresc = unit * ACRESCIMO_500UN_PCT;
-      breakdown.push(`Acréscimo 500un (+25%): +R$ ${acresc.toFixed(2)}`);
-      unit += acresc;
-    }
+      if (f.acrescimo500) {
+        const acresc = unit * ACRESCIMO_500UN_PCT;
+        breakdown.push(`Acréscimo 500un (+25%): +R$ ${acresc.toFixed(2)}`);
+        unit += acresc;
+      }
 
-    const qty = Math.max(1, Math.floor(quantidade) || 1);
-    return { unit, total: unit * qty, breakdown, qty } as const;
-  }, [sacola, papel, papelValor, acabamentosSel, acabamentosVal, corQty, corValorAtual, ilhos, ilhosValor, gorgurao, gorguraoValorAtual, flat, flatValorAtual, policromia, policromiaValor, acrescimo500, quantidade]);
+      const qty = Math.max(1, Math.floor(f.quantidade) || 1);
+      return { faixa: f, unit, total: unit * qty, qty, breakdown };
+    });
+
+    const total = porFaixa.reduce((s, fc) => s + fc.total, 0);
+    return { porFaixa, total } as const;
+  }, [sacola, papel, papelValor, acabamentosSel, acabamentosVal, corQty, corValor, ilhos, ilhosValor, gorgurao, gorguraoValorAtual, flat, flatValorAtual, policromia, policromiaValor, faixas]);
 
   const totalCalc = calculo && !("erro" in calculo) ? calculo.total : 0;
   const aVistaValor = aVistaOverride ?? (totalCalc * (1 - (descontoAVistaPct || 0) / 100));
@@ -212,8 +213,7 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
 
   const reset = () => {
     setMedidaIdx("");
-    setQuantidade(1000);
-    setAcrescimo500(false);
+    setFaixas([newFaixa(1000, false)]);
     setPapelValorOverride(null);
     setAcabamentosSel(new Set());
     setAcabamentosVal({});
@@ -238,23 +238,28 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
 
   const handleGerar = async () => {
     if (!sacola || !calculo || "erro" in calculo) return;
-    await onGerar(
-      {
-        nome: `Sacola Papel ${PAPEIS_LABELS[papel]} ${sacola.medida}`,
-        descricao: descricao.trim() || descricaoBaseline,
-        valorUnitario: Number(calculo.unit.toFixed(4)),
-        quantidade: calculo.qty,
-      },
-      {
-        aVista: Number(aVistaValor.toFixed(2)),
-        parcelas,
-        valorParcela: Number(valorParcela.toFixed(2)),
-        comJuros,
-        taxaJuros: comJuros ? taxaJuros : undefined,
-      },
-    );
+    const baseDesc = descricao.trim() || descricaoBaseline;
+    const items: ItemCalculado[] = calculo.porFaixa.map((fc) => ({
+      nome: `Sacola Papel ${PAPEIS_LABELS[papel]} ${sacola.medida} — ${fc.qty}un`,
+      descricao: `${baseDesc}\nFaixa ${fc.qty}un${fc.faixa.acrescimo500 ? " (+25%)" : ""}`,
+      valorUnitario: Number(fc.unit.toFixed(4)),
+      quantidade: fc.qty,
+    }));
+    await onGerar(items, {
+      aVista: Number(aVistaValor.toFixed(2)),
+      parcelas,
+      valorParcela: Number(valorParcela.toFixed(2)),
+      comJuros,
+      taxaJuros: comJuros ? taxaJuros : undefined,
+    });
     reset();
   };
+
+  const updateFaixa = (id: string, patch: Partial<Faixa>) => {
+    setFaixas((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+  };
+  const removeFaixa = (id: string) => setFaixas((prev) => prev.filter((f) => f.id !== id));
+  const addFaixa = (qty: number) => setFaixas((prev) => [...prev, newFaixa(qty, qty > 0 && qty < 1000)]);
 
   const toggleAcabamento = (key: AcabamentoTipo, checked: boolean) => {
     setAcabamentosSel((prev) => {
@@ -355,42 +360,67 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <Label className="text-sm">Quantidade</Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      min={1}
-                      value={quantidade}
-                      onChange={(e) => setQuantidade(Math.max(1, Number(e.target.value) || 1))}
-                      className="text-sm"
-                    />
-                    {[500, 1000, 5000].map((q) => (
+                <div className="md:col-span-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm">Faixas de quantidade</Label>
+                    <div className="flex gap-1">
+                      {[500, 1000, 5000].map((q) => (
+                        <button
+                          type="button"
+                          key={q}
+                          onClick={() => addFaixa(q)}
+                          className="px-2 py-1 rounded text-xs border bg-white border-neutral-300 hover:border-red-400"
+                          title={`Adicionar faixa ${q}un`}
+                        >
+                          + {q}
+                        </button>
+                      ))}
                       <button
                         type="button"
-                        key={q}
-                        onClick={() => setQuantidade(q)}
-                        className={`px-2 py-1 rounded text-xs border ${
-                          quantidade === q
-                            ? "bg-red-600 text-white border-red-600"
-                            : "bg-white border-neutral-300 hover:border-red-400"
-                        }`}
+                        onClick={() => addFaixa(1000)}
+                        className="px-2 py-1 rounded text-xs border bg-white border-neutral-300 hover:border-red-400"
                       >
-                        {q}
+                        + custom
                       </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {faixas.map((f, idx) => (
+                      <div key={f.id} className="flex items-center gap-2 p-2 rounded border bg-white/60">
+                        <span className="text-xs text-muted-foreground w-6">#{idx + 1}</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={f.quantidade}
+                          onChange={(e) => updateFaixa(f.id, {
+                            quantidade: Math.max(1, Number(e.target.value) || 1),
+                            acrescimo500: (Number(e.target.value) || 0) > 0 && (Number(e.target.value) || 0) < 1000,
+                          })}
+                          className="text-sm h-8 w-24"
+                        />
+                        <span className="text-xs text-muted-foreground">un</span>
+                        <label className="flex items-center gap-1 text-xs cursor-pointer">
+                          <Checkbox
+                            checked={f.acrescimo500}
+                            onCheckedChange={(c) => updateFaixa(f.id, { acrescimo500: !!c })}
+                          />
+                          +25% (500un)
+                        </label>
+                        <div className="flex-1" />
+                        {faixas.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeFaixa(f.id)}
+                            className="text-xs text-red-600 hover:text-red-700 px-1"
+                            title="Remover faixa"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
                     ))}
                   </div>
-                </div>
-
-                <div className="md:col-span-2 flex items-center gap-2">
-                  <Checkbox
-                    id="acresc500"
-                    checked={acrescimo500}
-                    onCheckedChange={(c) => setAcrescimo500(!!c)}
-                  />
-                  <Label htmlFor="acresc500" className="font-normal text-sm cursor-pointer">
-                    Aplicar acréscimo +25% (tabela 500un)
-                  </Label>
                 </div>
               </div>
 
@@ -434,7 +464,7 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
                   <Label className="text-sm font-normal">
                     Cores adicionais
                     <span className="text-xs text-muted-foreground ml-1">
-                      (sugerido: R$ {(quantidade >= 5000 ? EXTRAS.COR_5000_MAIS : EXTRAS.COR_ATE_5000).toFixed(2)}/un)
+                      (sugerido por faixa: R$ {EXTRAS.COR_ATE_5000.toFixed(2)} até 5000un · R$ {EXTRAS.COR_5000_MAIS.toFixed(2)} a partir de 5000un)
                     </span>
                   </Label>
                   <Input
@@ -449,10 +479,10 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
                     type="number"
                     step="0.01"
                     min={0}
-                    value={corValorAtual}
-                    onChange={(e) => setCorValor(Number(e.target.value) || 0)}
+                    value={corValor ?? ""}
+                    onChange={(e) => setCorValor(e.target.value === "" ? null : (Number(e.target.value) || 0))}
                     className="w-20 text-xs h-8"
-                    placeholder="R$/un"
+                    placeholder={`auto`}
                   />
                 </div>
 
@@ -581,20 +611,25 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
                   {calculo.erro}
                 </div>
               ) : calculo ? (
-                <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50">
-                  <p className="text-xs text-emerald-700 font-semibold uppercase tracking-wider mb-1">Resumo</p>
-                  <ul className="text-xs text-neutral-700 space-y-0.5">
-                    {calculo.breakdown.map((l, i) => (<li key={i}>{l}</li>))}
-                  </ul>
-                  <div className="mt-2 pt-2 border-t border-emerald-200 space-y-1">
-                    <div className="flex justify-between text-xs text-neutral-600">
-                      <span>Unitário:</span>
-                      <span>{formatCurrency(calculo.unit)}</span>
+                <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50 space-y-2">
+                  <p className="text-xs text-emerald-700 font-semibold uppercase tracking-wider">Resumo por faixa</p>
+                  {calculo.porFaixa.map((fc, idx) => (
+                    <div key={fc.faixa.id} className="rounded border border-emerald-200/60 bg-white/60 p-2">
+                      <p className="text-xs font-semibold text-emerald-800 mb-1">
+                        Faixa #{idx + 1} — {fc.qty}un {fc.faixa.acrescimo500 && <span className="text-amber-700">(+25%)</span>}
+                      </p>
+                      <ul className="text-[11px] text-neutral-700 space-y-0.5">
+                        {fc.breakdown.map((l, i) => (<li key={i}>{l}</li>))}
+                      </ul>
+                      <div className="mt-1 pt-1 border-t border-emerald-100 flex justify-between text-xs">
+                        <span className="text-neutral-600">Unit: {formatCurrency(fc.unit)}</span>
+                        <span className="font-semibold">Subtotal: {formatCurrency(fc.total)}</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between text-sm font-bold">
-                      <span>Total ({calculo.qty} un):</span>
-                      <span>{formatCurrency(calculo.total)}</span>
-                    </div>
+                  ))}
+                  <div className="pt-1 border-t border-emerald-200 flex justify-between text-sm font-bold">
+                    <span>Total geral:</span>
+                    <span>{formatCurrency(calculo.total)}</span>
                   </div>
                 </div>
               ) : null}
