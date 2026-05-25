@@ -31,6 +31,7 @@ import {
   DollarSign,
   Calendar,
   CalendarDays,
+  RefreshCw,
 } from "lucide-react";
 import type { PropostaDB, PropostaServicoDB } from "@/types/proposta";
 
@@ -115,7 +116,7 @@ function filterByPeriodo(propostas: PropostaDB[], periodo: PeriodoFiltro, dateRa
 }
 
 export default function Vendas() {
-  const { data: propostas = [], isLoading } = usePropostas();
+  const { data: propostas = [], isLoading, refetch, isFetching } = usePropostas();
   const [periodo, setPeriodo] = useState<PeriodoFiltro>("mes");
   const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -145,7 +146,7 @@ export default function Vendas() {
         const cat = categorizeServico(servico.servico_nome);
         const qty = Number((servico as any).quantidade) || 1;
         const subtotal = (Number(servico.valor_mensal) || 0) * qty;
-        stats[cat].quantidade += 1;
+        stats[cat].quantidade += qty;
         stats[cat].valorTotal += subtotal;
       });
     });
@@ -242,11 +243,23 @@ export default function Vendas() {
     <div className="space-y-6">
       {/* Header + Filtros */}
       <div className="flex flex-col gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Vendas por Categoria</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Vendas fechadas — {periodoLabel[periodo]}
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Vendas por Categoria</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              Vendas fechadas — {periodoLabel[periodo]}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="gap-1.5"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Atualizar</span>
+          </Button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -306,10 +319,10 @@ export default function Vendas() {
         <Card className="border-0 shadow-md">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-muted-foreground">Itens vendidos</p>
+              <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-muted-foreground">Unidades vendidas</p>
               <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500"><Package className="h-3.5 w-3.5" /></div>
             </div>
-            <p className="text-lg sm:text-2xl font-extrabold">{totalItens}</p>
+            <p className="text-lg sm:text-2xl font-extrabold">{totalItens.toLocaleString("pt-BR")}</p>
             <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5">no período</p>
           </CardContent>
         </Card>
@@ -358,7 +371,7 @@ export default function Vendas() {
                     <p className="font-medium text-xs sm:text-sm truncate">{label}</p>
                   </div>
                   <p className="text-base sm:text-xl font-bold">{formatCurrency(stat.valorTotal)}</p>
-                  <p className="text-[10px] text-muted-foreground mt-1">{stat.quantidade} itens</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">{stat.quantidade.toLocaleString("pt-BR")} unidades</p>
                 </CardContent>
               </Card>
             );
@@ -464,7 +477,7 @@ export default function Vendas() {
                   <Icon className="h-4 w-4 shrink-0" style={{ color: CATEGORY_COLORS[key] }} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium">{label}</p>
-                    <p className="text-xs text-muted-foreground">{stat.quantidade} itens</p>
+                    <p className="text-xs text-muted-foreground">{stat.quantidade.toLocaleString("pt-BR")} unidades</p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold">{formatCurrency(stat.valorTotal)}</p>
@@ -487,7 +500,7 @@ export default function Vendas() {
               <thead>
                 <tr className="border-b">
                   <th className="text-left py-3 px-2 font-semibold">Categoria</th>
-                  <th className="text-center py-3 px-2 font-semibold">Itens</th>
+                  <th className="text-center py-3 px-2 font-semibold">Unidades</th>
                   <th className="text-right py-3 px-2 font-semibold">Total</th>
                   <th className="text-right py-3 px-2 font-semibold">%</th>
                 </tr>
@@ -517,7 +530,7 @@ export default function Vendas() {
                 })}
                 <tr className="bg-muted/30 font-semibold">
                   <td className="py-3 px-2">Total</td>
-                  <td className="text-center py-3 px-2">{totalItens}</td>
+                  <td className="text-center py-3 px-2">{totalItens.toLocaleString("pt-BR")}</td>
                   <td className="text-right py-3 px-2">{formatCurrency(totalGeral)}</td>
                   <td className="text-right py-3 px-2">100%</td>
                 </tr>

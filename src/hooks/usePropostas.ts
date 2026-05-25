@@ -18,8 +18,9 @@ export function usePropostas() {
       return (data as any) ?? [];
     },
     enabled: !!user,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 15 * 1000,
     gcTime: 10 * 60 * 1000,
+    refetchOnMount: "always",
   });
 }
 
