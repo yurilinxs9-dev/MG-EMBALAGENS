@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RotateCcw } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useCreateProposta, useUpdatePropostaCompleta, useProposta } from "@/hooks/usePropostas";
 import {
@@ -20,7 +22,7 @@ import { SERVICOS_PADRAO, type Servico } from "@/types/proposta";
 import { useToast } from "@/hooks/use-toast";
 import { generatePDF } from "@/lib/generatePDF";
 import { ArrowLeft, FileDown, Save, Plus, Settings, Trash2, Eye, EyeOff, Calendar, Calculator } from "lucide-react";
-import CalculadoraPapelMaquina, { type ItemCalculado } from "@/components/CalculadoraPapelMaquina";
+import CalculadoraPapelMaquina, { type ItemCalculado, type PagamentoInfo } from "@/components/CalculadoraPapelMaquina";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
@@ -71,6 +73,13 @@ export default function NovaProposta() {
 
   const [gerandoPapel, setGerandoPapel] = useState(false);
 
+  // Pagamento — cartão usa valor total; à vista permite desconto/override
+  const [aVistaOverride, setAVistaOverride] = useState<number | null>(null);
+  const [descontoAVistaPct, setDescontoAVistaPct] = useState<number>(0);
+  const [parcelas, setParcelas] = useState<number>(6);
+  const [comJuros, setComJuros] = useState<boolean>(false);
+  const [taxaJuros, setTaxaJuros] = useState<number>(2.5);
+
   interface ClienteDados {
     nome: string;
     empresa: string;
@@ -80,13 +89,14 @@ export default function NovaProposta() {
   }
 
   const [pendingPapelCalc, setPendingPapelCalc] = useState<ItemCalculado | null>(null);
+  const [pendingPapelPagamento, setPendingPapelPagamento] = useState<PagamentoInfo | null>(null);
   const [popupNome, setPopupNome] = useState("");
   const [popupEmpresa, setPopupEmpresa] = useState("");
   const [popupWhatsapp, setPopupWhatsapp] = useState("");
   const [popupEmail, setPopupEmail] = useState("");
   const [popupEndereco, setPopupEndereco] = useState("");
 
-  const gerarPropostaPapelComCliente = async (calc: ItemCalculado, cliente: ClienteDados) => {
+  const gerarPropostaPapelComCliente = async (calc: ItemCalculado, pagamento: PagamentoInfo, cliente: ClienteDados) => {
     setGerandoPapel(true);
     try {
       const valorTotalProposta = Number((calc.valorUnitario * calc.quantidade).toFixed(2));
@@ -133,6 +143,7 @@ export default function NovaProposta() {
             quantidade: calc.quantidade,
           }],
           valorTotal: valorTotalProposta,
+          pagamento,
         });
       } catch (pdfError: any) {
         toast({ title: "Proposta salva, erro no PDF", description: pdfError.message, variant: "destructive" });
@@ -148,7 +159,7 @@ export default function NovaProposta() {
     }
   };
 
-  const handleGerarPropostaPapel = async (calc: ItemCalculado) => {
+  const handleGerarPropostaPapel = async (calc: ItemCalculado, pagamento: PagamentoInfo) => {
     if (!clienteNome.trim()) {
       setPopupNome(clienteNome);
       setPopupEmpresa(clienteEmpresa);
@@ -156,9 +167,10 @@ export default function NovaProposta() {
       setPopupEmail(clienteEmail);
       setPopupEndereco(clienteEndereco);
       setPendingPapelCalc(calc);
+      setPendingPapelPagamento(pagamento);
       return;
     }
-    await gerarPropostaPapelComCliente(calc, {
+    await gerarPropostaPapelComCliente(calc, pagamento, {
       nome: clienteNome,
       empresa: clienteEmpresa,
       whatsapp: clienteWhatsapp,
@@ -168,15 +180,17 @@ export default function NovaProposta() {
   };
 
   const handlePopupConfirmar = async () => {
-    if (!popupNome.trim() || !pendingPapelCalc) return;
+    if (!popupNome.trim() || !pendingPapelCalc || !pendingPapelPagamento) return;
     setClienteNome(popupNome);
     setClienteEmpresa(popupEmpresa);
     setClienteWhatsapp(popupWhatsapp);
     setClienteEmail(popupEmail);
     setClienteEndereco(popupEndereco);
     const calc = pendingPapelCalc;
+    const pagamento = pendingPapelPagamento;
     setPendingPapelCalc(null);
-    await gerarPropostaPapelComCliente(calc, {
+    setPendingPapelPagamento(null);
+    await gerarPropostaPapelComCliente(calc, pagamento, {
       nome: popupNome,
       empresa: popupEmpresa,
       whatsapp: popupWhatsapp,
@@ -335,6 +349,26 @@ export default function NovaProposta() {
     0,
   );
 
+  const aVistaValor = aVistaOverride ?? (valorTotal * (1 - (descontoAVistaPct || 0) / 100));
+  const cartaoValor = valorTotal;
+
+  const valorParcela = useMemo(() => {
+    if (parcelas <= 1) return cartaoValor;
+    if (!comJuros || taxaJuros <= 0) return cartaoValor / parcelas;
+    const i = taxaJuros / 100;
+    return (cartaoValor * (i * Math.pow(1 + i, parcelas))) / (Math.pow(1 + i, parcelas) - 1);
+  }, [cartaoValor, parcelas, comJuros, taxaJuros]);
+
+  const totalParceladoComJuros = valorParcela * parcelas;
+
+  const pagamentoPayload = () => ({
+    aVista: Number(aVistaValor.toFixed(2)),
+    parcelas,
+    valorParcela: Number(valorParcela.toFixed(2)),
+    comJuros,
+    taxaJuros: comJuros ? taxaJuros : undefined,
+  });
+
   const canSubmit = clienteNome.trim() && selecionados.length > 0;
 
   const handleAddItem = async () => {
@@ -432,6 +466,7 @@ export default function NovaProposta() {
               quantidade: Number(s.quantidade) || 1,
             })),
             valorTotal,
+            pagamento: pagamentoPayload(),
           });
         } catch (pdfError: any) {
           toast({ title: "Erro ao gerar PDF", description: pdfError.message, variant: "destructive" });
@@ -587,6 +622,138 @@ export default function NovaProposta() {
         </CardContent>
       </Card>
 
+      {/* Pagamento — à vista e cartão são INDEPENDENTES */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Pagamento</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+
+          {/* À vista */}
+          <div className="space-y-2 p-3 rounded-lg border bg-emerald-50/40">
+            <div className="flex items-center justify-between">
+              <Label className="font-semibold text-sm">À vista</Label>
+              {(aVistaOverride != null || descontoAVistaPct > 0) && (
+                <button
+                  type="button"
+                  onClick={() => { setAVistaOverride(null); setDescontoAVistaPct(0); }}
+                  className="text-xs text-red-600 hover:text-red-700 flex items-center gap-1"
+                >
+                  <RotateCcw className="h-3 w-3" /> Resetar
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Desconto (%)</Label>
+                <Input
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  max={100}
+                  value={descontoAVistaPct}
+                  onChange={(e) => { setDescontoAVistaPct(Number(e.target.value) || 0); setAVistaOverride(null); }}
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Valor final (R$)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={aVistaValor.toFixed(2)}
+                  onChange={(e) => setAVistaOverride(Number(e.target.value) || 0)}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-emerald-700">À vista: <strong>{formatCurrency(aVistaValor)}</strong></p>
+          </div>
+
+          {/* Cartão — usa o total da proposta */}
+          <div className="space-y-2 p-3 rounded-lg border bg-blue-50/40">
+            <Label className="font-semibold text-sm">Cartão (sobre o total: {formatCurrency(valorTotal)})</Label>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Parcelas</Label>
+                <Select value={String(parcelas)} onValueChange={(v) => setParcelas(Number(v))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1,2,3,4,5,6,7,8,9,10,11,12].map((n) => (
+                      <SelectItem key={n} value={String(n)}>{n}x</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Tipo</Label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setComJuros(false)}
+                    className={`flex-1 px-2 py-2 rounded text-xs font-medium border transition-colors ${
+                      !comJuros
+                        ? "bg-red-600 text-white border-red-600"
+                        : "bg-white text-neutral-700 border-neutral-300 hover:border-red-400"
+                    }`}
+                  >
+                    Sem juros
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setComJuros(true)}
+                    className={`flex-1 px-2 py-2 rounded text-xs font-medium border transition-colors ${
+                      comJuros
+                        ? "bg-red-600 text-white border-red-600"
+                        : "bg-white text-neutral-700 border-neutral-300 hover:border-red-400"
+                    }`}
+                  >
+                    Com juros
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {comJuros && (
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Taxa de juros (% ao mês)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={taxaJuros}
+                  onChange={(e) => setTaxaJuros(Number(e.target.value) || 0)}
+                />
+              </div>
+            )}
+
+            <p className="text-xs text-blue-700">
+              {parcelas > 1 ? (
+                <>
+                  {parcelas}x {comJuros ? "com juros" : "sem juros"}: <strong>{formatCurrency(valorParcela)}/parcela</strong>
+                  {comJuros && <span className="text-blue-500"> · total: {formatCurrency(totalParceladoComJuros)}</span>}
+                </>
+              ) : (
+                <>Pagamento único: <strong>{formatCurrency(cartaoValor)}</strong></>
+              )}
+            </p>
+          </div>
+
+          <Button
+            className="w-full bg-red-600 hover:bg-red-700"
+            size="lg"
+            disabled={!canSubmit || isSaving}
+            onClick={() => handleSave(true)}
+          >
+            <FileDown className="h-4 w-4 mr-2" />
+            {isSaving ? "Gerando..." : "Gerar Proposta agora"}
+          </Button>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -729,7 +896,7 @@ export default function NovaProposta() {
         </div>
       </div>
 
-      <Button className="w-full" size="lg" disabled={!canSubmit} onClick={() => setStep("resumo")}>
+      <Button variant="outline" className="w-full" size="lg" disabled={!canSubmit} onClick={() => setStep("resumo")}>
         Ver Resumo do Orçamento
       </Button>
 

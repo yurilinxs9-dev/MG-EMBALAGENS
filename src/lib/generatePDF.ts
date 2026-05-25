@@ -7,6 +7,14 @@ export interface PDFItem {
   quantidade: number;
 }
 
+export interface PDFPagamento {
+  aVista: number;
+  parcelas: number;
+  valorParcela: number;
+  comJuros: boolean;
+  taxaJuros?: number;
+}
+
 export interface PDFData {
   clienteNome: string;
   clienteEmpresa: string;
@@ -17,6 +25,7 @@ export interface PDFData {
   nota?: string;
   itens: PDFItem[];
   valorTotal: number;
+  pagamento?: PDFPagamento;
   propostaNumero?: string;
 }
 
@@ -249,6 +258,27 @@ export async function generatePDF(data: PDFData) {
     page, formatCurrency(data.valorTotal),
     RIGHT_EDGE - 38, Y_TOTAL, 12, helveticaBold, RED,
   );
+
+  // ══════════════════════════════════════════════════════════
+  // Opções de pagamento abaixo do TOTAL
+  // ══════════════════════════════════════════════════════════
+  const pag = data.pagamento ?? {
+    aVista: data.valorTotal,
+    parcelas: 6,
+    valorParcela: data.valorTotal / 6,
+    comJuros: false,
+  };
+  drawTextRight(
+    page, `À vista: ${formatCurrency(pag.aVista)}`,
+    RIGHT_EDGE - 38, Y_TOTAL - 16, 8, helvetica, DARK,
+  );
+  if (pag.parcelas > 1) {
+    const jurosLabel = pag.comJuros ? "com juros" : "sem juros";
+    drawTextRight(
+      page, `Cartão ${pag.parcelas}x ${jurosLabel}: ${formatCurrency(pag.valorParcela)}/parcela`,
+      RIGHT_EDGE - 38, Y_TOTAL - 28, 8, helvetica, DARK,
+    );
+  }
 
   // ══════════════════════════════════════════════════════════
   // SAVE & DOWNLOAD

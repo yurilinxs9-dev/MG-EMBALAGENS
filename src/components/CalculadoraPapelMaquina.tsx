@@ -22,10 +22,18 @@ export interface ItemCalculado {
   quantidade: number;
 }
 
+export interface PagamentoInfo {
+  aVista: number;
+  parcelas: number;
+  valorParcela: number;
+  comJuros: boolean;
+  taxaJuros?: number;
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
-  onGerar: (item: ItemCalculado) => Promise<void> | void;
+  onGerar: (item: ItemCalculado, pagamento: PagamentoInfo) => Promise<void> | void;
   loading?: boolean;
 }
 
@@ -70,6 +78,13 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
 
   const [descricao, setDescricao] = useState("");
   const [descricaoAuto, setDescricaoAuto] = useState(true);
+
+  // Pagamento — cartão usa total calculado; à vista permite desconto/override
+  const [aVistaOverride, setAVistaOverride] = useState<number | null>(null);
+  const [descontoAVistaPct, setDescontoAVistaPct] = useState<number>(0);
+  const [parcelas, setParcelas] = useState<number>(6);
+  const [comJuros, setComJuros] = useState<boolean>(false);
+  const [taxaJuros, setTaxaJuros] = useState<number>(2.5);
 
   const sacolas = orientacao === "horizontal" ? SACOLAS_HORIZONTAL : SACOLAS_VERTICAL;
   const sacola = useMemo<SacolaPapelMaquina | null>(() => {
@@ -157,6 +172,19 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
     return { unit, total: unit * qty, breakdown, qty } as const;
   }, [sacola, papel, papelValor, acabamentosSel, acabamentosVal, corQty, corValorAtual, ilhos, ilhosValor, gorgurao, gorguraoValorAtual, flat, flatValorAtual, policromia, policromiaValor, acrescimo500, quantidade]);
 
+  const totalCalc = calculo && !("erro" in calculo) ? calculo.total : 0;
+  const aVistaValor = aVistaOverride ?? (totalCalc * (1 - (descontoAVistaPct || 0) / 100));
+  const cartaoValor = totalCalc;
+
+  const valorParcela = useMemo(() => {
+    if (parcelas <= 1) return cartaoValor;
+    if (!comJuros || taxaJuros <= 0) return cartaoValor / parcelas;
+    const i = taxaJuros / 100;
+    return (cartaoValor * (i * Math.pow(1 + i, parcelas))) / (Math.pow(1 + i, parcelas) - 1);
+  }, [cartaoValor, parcelas, comJuros, taxaJuros]);
+
+  const totalParceladoComJuros = valorParcela * parcelas;
+
   const descricaoBaseline = useMemo(() => {
     if (!sacola) return "";
     const detalhes: string[] = [];
@@ -201,16 +229,30 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
     setPolicromiaValor(EXTRAS.POLICROMIA);
     setDescricao("");
     setDescricaoAuto(true);
+    setAVistaOverride(null);
+    setDescontoAVistaPct(0);
+    setParcelas(6);
+    setComJuros(false);
+    setTaxaJuros(2.5);
   };
 
   const handleGerar = async () => {
     if (!sacola || !calculo || "erro" in calculo) return;
-    await onGerar({
-      nome: `Sacola Papel ${PAPEIS_LABELS[papel]} ${sacola.medida}`,
-      descricao: descricao.trim() || descricaoBaseline,
-      valorUnitario: Number(calculo.unit.toFixed(4)),
-      quantidade: calculo.qty,
-    });
+    await onGerar(
+      {
+        nome: `Sacola Papel ${PAPEIS_LABELS[papel]} ${sacola.medida}`,
+        descricao: descricao.trim() || descricaoBaseline,
+        valorUnitario: Number(calculo.unit.toFixed(4)),
+        quantidade: calculo.qty,
+      },
+      {
+        aVista: Number(aVistaValor.toFixed(2)),
+        parcelas,
+        valorParcela: Number(valorParcela.toFixed(2)),
+        comJuros,
+        taxaJuros: comJuros ? taxaJuros : undefined,
+      },
+    );
     reset();
   };
 
@@ -556,6 +598,126 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
                   </div>
                 </div>
               ) : null}
+
+              {/* Pagamento — à vista e cartão INDEPENDENTES */}
+              <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                <Label className="font-semibold">Pagamento</Label>
+
+                {/* À vista */}
+                <div className="space-y-2 p-2 rounded-md border bg-emerald-50/40">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-semibold">À vista</Label>
+                    {(aVistaOverride != null || descontoAVistaPct > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => { setAVistaOverride(null); setDescontoAVistaPct(0); }}
+                        className="text-xs text-red-600 hover:text-red-700 flex items-center gap-1"
+                      >
+                        <RotateCcw className="h-3 w-3" /> Resetar
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Desconto (%)</Label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        min={0}
+                        max={100}
+                        value={descontoAVistaPct}
+                        onChange={(e) => { setDescontoAVistaPct(Number(e.target.value) || 0); setAVistaOverride(null); }}
+                        className="text-xs h-8"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Valor final (R$)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={aVistaValor.toFixed(2)}
+                        onChange={(e) => setAVistaOverride(Number(e.target.value) || 0)}
+                        className="text-xs h-8"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-emerald-700">À vista: <strong>{formatCurrency(aVistaValor)}</strong></p>
+                </div>
+
+                {/* Cartão — usa total calculado */}
+                <div className="space-y-2 p-2 rounded-md border bg-blue-50/40">
+                  <Label className="text-sm font-semibold">Cartão (sobre o total: {formatCurrency(cartaoValor)})</Label>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Parcelas</Label>
+                      <Select value={String(parcelas)} onValueChange={(v) => setParcelas(Number(v))}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {[1,2,3,4,5,6,7,8,9,10,11,12].map((n) => (
+                            <SelectItem key={n} value={String(n)}>{n}x</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Tipo</Label>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setComJuros(false)}
+                          className={`flex-1 px-1 py-1.5 rounded text-xs font-medium border transition-colors ${
+                            !comJuros
+                              ? "bg-red-600 text-white border-red-600"
+                              : "bg-white text-neutral-700 border-neutral-300 hover:border-red-400"
+                          }`}
+                        >
+                          Sem juros
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setComJuros(true)}
+                          className={`flex-1 px-1 py-1.5 rounded text-xs font-medium border transition-colors ${
+                            comJuros
+                              ? "bg-red-600 text-white border-red-600"
+                              : "bg-white text-neutral-700 border-neutral-300 hover:border-red-400"
+                          }`}
+                        >
+                          Com juros
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {comJuros && (
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Taxa (% a.m.)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={taxaJuros}
+                        onChange={(e) => setTaxaJuros(Number(e.target.value) || 0)}
+                        className="text-xs h-8"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-xs text-blue-700">
+                    {parcelas > 1 ? (
+                      <>
+                        {parcelas}x {comJuros ? "com juros" : "sem juros"}: <strong>{formatCurrency(valorParcela)}/parcela</strong>
+                        {comJuros && <span className="text-blue-500"> · total: {formatCurrency(totalParceladoComJuros)}</span>}
+                      </>
+                    ) : (
+                      <>Pagamento único: <strong>{formatCurrency(cartaoValor)}</strong></>
+                    )}
+                  </p>
+                </div>
+              </div>
+
             </>
           )}
         </div>
