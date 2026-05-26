@@ -66,6 +66,8 @@ export default function NovaProposta() {
   const [clienteEndereco, setClienteEndereco] = useState("");
   const [nota, setNota] = useState("Orçamento para itens personalizados.");
   const [itens, setItens] = useState<ItemComId[]>([]);
+  const itensRef = useRef<ItemComId[]>([]);
+  useEffect(() => { itensRef.current = itens; }, [itens]);
   const [step, setStep] = useState<"form" | "resumo">("form");
 
   const [showAddModal, setShowAddModal] = useState(false);
@@ -100,7 +102,7 @@ export default function NovaProposta() {
   const gerarPropostaPapelComCliente = async (calcs: ItemCalculado[], pagamento: PagamentoInfo, cliente: ClienteDados) => {
     setGerandoPapel(true);
     try {
-      const selecionadosAtuais: ItemCalculado[] = itens
+      const selecionadosAtuais: ItemCalculado[] = itensRef.current
         .filter((s) => s.selecionado)
         .map((s) => ({
           nome: s.nome,
@@ -463,13 +465,18 @@ export default function NovaProposta() {
 
   const handleSave = async (downloadPDF = false) => {
     try {
-      const itensFormatados = selecionados.map((s) => ({
+      const selecionadosAtuais = itensRef.current.filter((s) => s.selecionado);
+      const itensFormatados = selecionadosAtuais.map((s) => ({
         servico_nome: s.nome,
         descricao: s.descricao || "",
         valor_mensal: Number(s.valor_mensal) || 0,
         valor_setup: 0,
         quantidade: Number(s.quantidade) || 1,
       }));
+      const valorTotalAtual = selecionadosAtuais.reduce(
+        (sum, s) => sum + (Number(s.valor_mensal) || 0) * (Number(s.quantidade) || 1),
+        0,
+      );
 
       const valoresProposta: any = {
         cliente_nome: clienteNome,
@@ -479,7 +486,7 @@ export default function NovaProposta() {
         cliente_endereco: clienteEndereco || undefined,
         valor_mensal: 0,
         valor_setup: 0,
-        valor_total: Number(valorTotal) || 0,
+        valor_total: Number(valorTotalAtual) || 0,
         desconto_tipo: "fixo",
         desconto_valor: 0,
         observacoes: nota || undefined,
@@ -509,13 +516,13 @@ export default function NovaProposta() {
             clienteWhatsapp,
             clienteEndereco,
             nota,
-            itens: selecionados.map((s) => ({
+            itens: selecionadosAtuais.map((s) => ({
               nome: s.nome,
               descricao: s.descricao || "",
               valorUnitario: Number(s.valor_mensal) || 0,
               quantidade: Number(s.quantidade) || 1,
             })),
-            valorTotal,
+            valorTotal: valorTotalAtual,
             pagamento: pagamentoPayload(),
           });
         } catch (pdfError: any) {
