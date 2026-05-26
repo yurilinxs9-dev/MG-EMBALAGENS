@@ -34,6 +34,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onGerar: (items: ItemCalculado[], pagamento: PagamentoInfo) => Promise<void> | void;
+  onAdicionar?: (items: ItemCalculado[]) => void;
   loading?: boolean;
 }
 
@@ -58,7 +59,7 @@ const ALL_ACABAMENTOS: { key: AcabamentoTipo; label: string }[] = [
   { key: "VERNIZ_LOC", label: "Verniz Localizado" },
 ];
 
-export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loading }: Props) {
+export default function CalculadoraPapelMaquina({ open, onClose, onGerar, onAdicionar, loading }: Props) {
   const [orientacao, setOrientacao] = useState<OrientacaoSacola>("horizontal");
   const [medidaIdx, setMedidaIdx] = useState<string>("");
   const [papel, setPapel] = useState<PapelTipo>("AP180");
@@ -236,15 +237,20 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
     setTaxaJuros(2.5);
   };
 
-  const handleGerar = async () => {
-    if (!sacola || !calculo || "erro" in calculo) return;
+  const buildItems = (): ItemCalculado[] => {
+    if (!sacola || !calculo || "erro" in calculo) return [];
     const baseDesc = descricao.trim() || descricaoBaseline;
-    const items: ItemCalculado[] = calculo.porFaixa.map((fc) => ({
+    return calculo.porFaixa.map((fc) => ({
       nome: `Sacola Papel ${PAPEIS_LABELS[papel]} ${sacola.medida} — ${fc.qty}un`,
       descricao: `${baseDesc}\nFaixa ${fc.qty}un${fc.faixa.acrescimo500 ? " (+25%)" : ""}`,
       valorUnitario: Number(fc.unit.toFixed(4)),
       quantidade: fc.qty,
     }));
+  };
+
+  const handleGerar = async () => {
+    const items = buildItems();
+    if (items.length === 0) return;
     await onGerar(items, {
       aVista: Number(aVistaValor.toFixed(2)),
       parcelas,
@@ -253,6 +259,14 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
       taxaJuros: comJuros ? taxaJuros : undefined,
     });
     reset();
+  };
+
+  const handleAdicionar = () => {
+    const items = buildItems();
+    if (items.length === 0) return;
+    onAdicionar?.(items);
+    reset();
+    onClose();
   };
 
   const updateFaixa = (id: string, patch: Partial<Faixa>) => {
@@ -757,8 +771,18 @@ export default function CalculadoraPapelMaquina({ open, onClose, onGerar, loadin
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2 sm:gap-2 flex-col sm:flex-row">
           <Button variant="ghost" onClick={onClose} disabled={loading}>Cancelar</Button>
+          {onAdicionar && (
+            <Button
+              variant="outline"
+              onClick={handleAdicionar}
+              disabled={!sacola || !calculo || (calculo && "erro" in calculo) || loading}
+              className="border-red-300 text-red-700 hover:bg-red-50"
+            >
+              Adicionar à lista
+            </Button>
+          )}
           <Button
             onClick={handleGerar}
             disabled={!sacola || !calculo || (calculo && "erro" in calculo) || loading}

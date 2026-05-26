@@ -31,6 +31,7 @@ function formatCurrency(value: number) {
 interface ItemComId extends Servico {
   id?: string;
   isCustom?: boolean;
+  isCalculado?: boolean;
   oculto?: boolean;
   quantidade?: number;
 }
@@ -99,8 +100,21 @@ export default function NovaProposta() {
   const gerarPropostaPapelComCliente = async (calcs: ItemCalculado[], pagamento: PagamentoInfo, cliente: ClienteDados) => {
     setGerandoPapel(true);
     try {
+      const selecionadosAtuais: ItemCalculado[] = itens
+        .filter((s) => s.selecionado)
+        .map((s) => ({
+          nome: s.nome,
+          descricao: s.descricao || "",
+          valorUnitario: Number(s.valor_mensal) || 0,
+          quantidade: Number(s.quantidade) || 1,
+        }));
+
+      const nomesExistentes = new Set(selecionadosAtuais.map((i) => i.nome));
+      const calcsUnicos = calcs.filter((c) => !nomesExistentes.has(c.nome));
+      const todosItens = [...selecionadosAtuais, ...calcsUnicos];
+
       const valorTotalProposta = Number(
-        calcs.reduce((s, c) => s + c.valorUnitario * c.quantidade, 0).toFixed(2),
+        todosItens.reduce((s, c) => s + c.valorUnitario * c.quantidade, 0).toFixed(2),
       );
 
       const valoresProposta: any = {
@@ -115,7 +129,7 @@ export default function NovaProposta() {
         desconto_tipo: "fixo",
         desconto_valor: 0,
         observacoes: nota || undefined,
-        servicos: calcs.map((c) => ({
+        servicos: todosItens.map((c) => ({
           servico_nome: c.nome,
           descricao: c.descricao,
           valor_mensal: c.valorUnitario,
@@ -138,7 +152,7 @@ export default function NovaProposta() {
           clienteWhatsapp: cliente.whatsapp,
           clienteEndereco: cliente.endereco,
           nota: nota || "",
-          itens: calcs.map((c) => ({
+          itens: todosItens.map((c) => ({
             nome: c.nome,
             descricao: c.descricao,
             valorUnitario: c.valorUnitario,
@@ -226,9 +240,10 @@ export default function NovaProposta() {
     }));
 
     setItens((prev) => {
+      const calculados = prev.filter((p) => p.isCalculado);
       const combined = [...padrao, ...custom];
-      return combined.map((s) => {
-        const existing = prev.find((p) => p.nome === s.nome);
+      const mesclados = combined.map((s) => {
+        const existing = prev.find((p) => !p.isCalculado && p.nome === s.nome);
         if (existing) {
           return {
             ...s,
@@ -240,6 +255,7 @@ export default function NovaProposta() {
         }
         return s;
       });
+      return [...mesclados, ...calculados];
     });
   }, [servicosPersonalizados]);
 
@@ -271,6 +287,38 @@ export default function NovaProposta() {
       );
     }
   }, [propostaExistente, itens.length]);
+
+  const handleAdicionarItensCalc = (items: ItemCalculado[]) => {
+    setItens((prev) => {
+      const existingNames = new Set(prev.map((p) => p.nome));
+      const novos: ItemComId[] = items.map((item) => {
+        let nome = item.nome;
+        let n = 2;
+        while (existingNames.has(nome)) {
+          nome = `${item.nome} (${n++})`;
+        }
+        existingNames.add(nome);
+        return {
+          nome,
+          descricao: item.descricao,
+          valor_mensal: item.valorUnitario,
+          valor_setup: 0,
+          temSetup: false,
+          selecionado: true,
+          isCustom: false,
+          isCalculado: true,
+          quantidade: item.quantidade,
+        };
+      });
+      return [...prev, ...novos];
+    });
+    setShowCalcPapel(false);
+    toast({ title: `${items.length} item(ns) adicionado(s) à lista` });
+  };
+
+  const removeItemCalculado = (nome: string) => {
+    setItens((prev) => prev.filter((s) => !(s.isCalculado && s.nome === nome)));
+  };
 
   const toggleItem = (index: number) => {
     setItens((prev) =>
@@ -800,6 +848,21 @@ export default function NovaProposta() {
                             Personalizado
                           </span>
                         )}
+                        {item.isCalculado && (
+                          <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                            Calculado
+                          </span>
+                        )}
+                        {item.isCalculado && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); removeItemCalculado(item.nome); }}
+                            className="ml-auto text-red-600 hover:text-red-700"
+                            title="Remover item calculado"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
                       {!item.selecionado && (
                         <ul className="text-sm text-muted-foreground mt-1 space-y-0.5">
@@ -1000,6 +1063,7 @@ export default function NovaProposta() {
         open={showCalcPapel}
         onClose={() => setShowCalcPapel(false)}
         onGerar={handleGerarPropostaPapel}
+        onAdicionar={handleAdicionarItensCalc}
         loading={gerandoPapel}
       />
 
